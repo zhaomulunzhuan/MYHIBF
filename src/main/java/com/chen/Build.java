@@ -12,9 +12,9 @@ import java.util.Collections;
 public class Build {
     private static int cur_level_index;
     private static int cur_ibf_index;
-    private static int h=2;//哈希函数个数
+    private static int h=7;//哈希函数个数
     private static int tmax;
-    private static double pfpr=0.05;//假阳性率
+    private static double pfpr=0.01;//假阳性率
 
     private static class MergeBin{
         int IBFindex;
@@ -46,6 +46,7 @@ public class Build {
     }
 
     public static void buildIndex() throws IOException {
+        System.out.println("开始构建"+cur_level_index+"层");
         //记录当前构建层的merge_bin
         List<MergeBin> curlevel_mergebins=new ArrayList<>();
         //构建第0层
@@ -53,6 +54,7 @@ public class Build {
         cur_level_index++;
         cur_ibf_index++;
         while(!curlevel_mergebins.isEmpty()){//知道当前层没有mergin bin，HIBF不需要继续向下构建
+            System.out.println("正在构建"+cur_level_index+"层");
             List<MergeBin> nextlevel_mergebins=new ArrayList<>();//记录下一层的mergin bin
             for(MergeBin mb:curlevel_mergebins){
                 //当前层要处理的merge_bin，处理一个merge_bin产生一个ibf
@@ -144,19 +146,47 @@ public class Build {
                             int bin_index=ibf.getTB_num();
                             nextlevel_mergebins.add(new MergeBin(cur_ibf_index,bin_index));
                         }
+//                        Set<String> all_kmers=new HashSet<>();
+//                        for(int datasetindex:datasets){
+//                            //获取文件路径
+//                            String filepath=Metadata.getDatapathByIdx(datasetindex);//文件地址
+//                            //读取kmers存储这几个bin中
+//                            try (BufferedReader br=new BufferedReader(new FileReader(filepath))){
+//                                String kmer;
+//                                while ((kmer=br.readLine())!=null){
+//                                    all_kmers.add(kmer);
+//                                }
+//                            }
+//                        }
+//                        cur_bin.batchInsertElements(all_kmers);
                         Set<String> all_kmers=new HashSet<>();
+                        Set<String> batchKmers = new HashSet<>();
+                        int batchSize = 1000000; // 根据实际情况调整这个值
                         for(int datasetindex:datasets){
-                            //获取文件路径
+                            //依次获取文件路径
                             String filepath=Metadata.getDatapathByIdx(datasetindex);//文件地址
-                            //读取kmers存储这几个bin中
                             try (BufferedReader br=new BufferedReader(new FileReader(filepath))){
                                 String kmer;
-                                while ((kmer=br.readLine())!=null){
-                                    all_kmers.add(kmer);
+//                                while ((kmer=br.readLine())!=null){
+//                                    all_kmers.add(kmer);
+//                                }
+                                while ((kmer = br.readLine()) != null) {
+                                    batchKmers.add(kmer);
+                                    if (batchKmers.size() >= batchSize) {
+                                        cur_bin.batchInsertElements(batchKmers);
+                                        batchKmers.clear();
+                                    }
                                 }
+// 处理剩余的kmers
+                                if (!batchKmers.isEmpty()) {
+                                    cur_bin.batchInsertElements(batchKmers);
+                                }
+                            }catch (IOException e) {
+                                throw new RuntimeException("Error reading file: " + filepath, e);
                             }
+//                            cur_bin.batchInsertElements(all_kmers);//将kmer添加到bin中
+//                            all_kmers.clear();
                         }
-                        cur_bin.batchInsertElements(all_kmers);
                         ibf.addBins(Collections.singletonList(cur_bin), Collections.singletonList(datasets));//添加到ibf中
 //                ibf.printInfo();
                         index++;//获取下一个数据集及其基数
@@ -173,6 +203,7 @@ public class Build {
     }
 
     public static void serializeAll(){//序列化HIBF索引和元数据
+        System.out.println("开始序列化");
         String index_serFIle="D:/Code/Idea_Codes/HIBF_FILE/serializeFIle/"+"hibf_index.ser";
         HIBF.serialize(index_serFIle);
         String metadata_serFIle="D:/Code/Idea_Codes/HIBF_FILE/serializeFIle/"+"meta.ser";
@@ -215,10 +246,26 @@ public class Build {
                     index++;
                 }
             }
-            if (need_bin_num<=tmax){
-                return basic_cardinality;
+            if (need_bin_num<=tmax){//single_bin size太大
+                if((tmax-need_bin_num)>2){
+                    //减小basic_cardinality
+                    // 当need_bin_num和tmax差距较大时，减小basic_cardinality
+                    // 这里减小basic_cardinality的幅度设为当前值的90%，即减小10%
+//                    System.out.println("tmax:"+tmax+",当前need_bin_num:"+need_bin_num);
+//                    System.out.println("下调single_bin的大小");
+                    basic_cardinality = (int) (basic_cardinality * 0.9);
+                }else {
+                    System.out.println("user bin数量"+cardinality_list.size()+",tmax:"+tmax+",最终need_bin_num:"+need_bin_num);
+//                    return (int) (basic_cardinality*0.8);
+                    if(cardinality_list.size()==need_bin_num){
+                        return basic_cardinality;
+                    }else {
+                        return (int) (basic_cardinality*0.8);
+                    }
+                }
             }else{//如果需要的bin数量超过tmax，则上调basic_cardinality
-//                System.out.println("调整single_bin的大小");
+//                System.out.println("tmax:"+tmax+",当前need_bin_num:"+need_bin_num);
+//                System.out.println("上调single_bin的大小");
                 basic_cardinality= (int) (1.5*basic_cardinality);
             }
         }
@@ -240,6 +287,7 @@ public class Build {
         IBF ibf=new IBF(cur_level_index,cur_ibf_index,-1);
 
         for (int index=0;index<Metadata.getSortedList().size();) {//依次获取数据集以及对应基数
+            System.out.println("处理第"+(index+1)+"数据集");
             Map.Entry<Integer,Integer> entry=Metadata.getSortedList().get(index);
             int dataset_index=entry.getKey();//数据集索引
             int cardinality=entry.getValue();//基数
@@ -310,8 +358,20 @@ public class Build {
                     int bin_index=ibf.getTB_num();//记录这个merge bin在所属IBF中的索引
                     curlevel_mergebins.add(new MergeBin(cur_ibf_index,bin_index));//添加到本层的merge bin信息中
                 }
-                Set<String> all_kmers=new HashSet<>();//无论是single还是merge，都是存储在一个bin中，这里将这个bin要存储的数据集的kmer合并
+//                Set<String> all_kmers=new HashSet<>();//无论是single还是merge，都是存储在一个bin中，这里将这个bin要存储的数据集的kmer合并
+//                for(int datasetindex:datasets){
+//                    //依次获取文件路径
+//                    String filepath=Metadata.getDatapathByIdx(datasetindex);//文件地址
+//                    try (BufferedReader br=new BufferedReader(new FileReader(filepath))){
+//                        String kmer;
+//                        while ((kmer=br.readLine())!=null){
+//                            all_kmers.add(kmer);
+//                        }
+//                    }
+//                }
+//                cur_bin.batchInsertElements(all_kmers);//将kmer添加到bin中
                 for(int datasetindex:datasets){
+                    Set<String> all_kmers=new HashSet<>();
                     //依次获取文件路径
                     String filepath=Metadata.getDatapathByIdx(datasetindex);//文件地址
                     try (BufferedReader br=new BufferedReader(new FileReader(filepath))){
@@ -320,8 +380,10 @@ public class Build {
                             all_kmers.add(kmer);
                         }
                     }
+                    cur_bin.batchInsertElements(all_kmers);//将kmer添加到bin中
+                    all_kmers.clear();
                 }
-                cur_bin.batchInsertElements(all_kmers);//将kmer添加到bin中
+
                 ibf.addBins(Collections.singletonList(cur_bin), Collections.singletonList(datasets));//添加到ibf中
 //                ibf.printInfo();
                 index++;//获取下一个数据集及其基数

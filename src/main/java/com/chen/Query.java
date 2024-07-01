@@ -7,6 +7,18 @@ import java.util.List;
 import java.util.Queue;
 
 public class Query {
+    private static long query_time=0;//查询
+
+    private static int total_query_bf_count=0;//查询的布隆过滤器总数
+
+    private static int total_query_kmer_count=0;//查询的kmer总数
+
+    public static int average_query_bf_count(){
+        return (int) Math.ceil(total_query_bf_count/total_query_kmer_count);
+    }
+    public static long getQuery_time() {
+        return query_time;
+    }
     //按列查询
     public static List<String> querykmer(String kmer){
         Queue<Integer> to_check_ibf = new LinkedList<>();
@@ -100,6 +112,8 @@ public class Query {
 
     //按行查询
     public static List<String> querykmerASrow(String kmer){
+        total_query_kmer_count++;
+        int query_bf_count=0;//查询需要查的布隆过滤器数量
         Queue<Integer> to_check_ibf = new LinkedList<>();
         List<String> result_samples=new ArrayList<>();//结果数据集名称
         //一层一层查 首先查第一层索引为0的IBF
@@ -108,6 +122,7 @@ public class Query {
             int ibf_index=to_check_ibf.peek();//队头元素
 //            System.out.println("当前查询IBF索引："+ibf_index);
             IBF query_ibf=HIBF.getIbfByIndex(ibf_index);//当前要检查的ibf
+            query_bf_count+=query_ibf.getTB_num();
             List<Integer> contain_bins=new ArrayList<>();//记录当前查询的ibf中包含查询元素的bin的索引
             //按行查询
             contain_bins=query_ibf.queryASrow(kmer);
@@ -129,9 +144,11 @@ public class Query {
             }
             to_check_ibf.poll();
         }
+        total_query_bf_count+=query_bf_count;
         return result_samples;
     }
     public static void querySequenceASrow(String sequence, BufferedWriter writer) throws IOException {//查找长序列，每个kmer都存在才报告序列存在
+        long startquery=System.currentTimeMillis();
         int kmersize=31;//根据数据集kmer长度简单写死
         List<String> kmerList=new ArrayList<>();
         // 切割sequence并将长度为kmersize的子字符串加入kmerList
@@ -144,6 +161,9 @@ public class Query {
         for(String kmer:kmerList){
             result.retainAll(querykmerASrow(kmer));
         }
+
+        long endquery = System.currentTimeMillis();
+        query_time+=(endquery-startquery);
 
         writer.write("查询结果\n");
         // 将查询结果写入到结果文件
